@@ -8,6 +8,7 @@ from xgboost import XGBRegressor
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
+
 def load_indicator_prices(path, target_col="Robustas"):
     df = pd.read_csv(path, sep=",", dtype=str)
     m1 = pd.to_datetime(df["months"], format="%d/%m/%Y", errors="coerce")
@@ -26,6 +27,7 @@ def load_indicator_prices(path, target_col="Robustas"):
     y_monthly = df[[target_col]].rename(columns={target_col: "Y"})
     return y_monthly
 
+
 def load_annual_wide(path):
     raw = pd.read_csv(path, sep=",", dtype=str)
     data = raw.copy()
@@ -33,7 +35,12 @@ def load_annual_wide(path):
     data = data.rename(columns={first_col: "country"})
     year_cols = [c for c in data.columns if c.isdigit()]
     for c in year_cols:
-        s = data[c].astype(str).str.replace(",", ".", regex=False).str.replace(" ", "", regex=False)
+        s = (
+            data[c]
+            .astype(str)
+            .str.replace(",", ".", regex=False)
+            .str.replace(" ", "", regex=False)
+        )
         data[c] = pd.to_numeric(s, errors="coerce")
     data = data.set_index("country")
     data.index = data.index.str.strip()
@@ -42,24 +49,35 @@ def load_annual_wide(path):
     df_t.index.name = "Ano"
     return df_t
 
+
 def impute_and_melt(path, value_name):
     wide = load_annual_wide(path)
     wide = impute_by_column(wide)
-    df_long = wide.reset_index().melt(id_vars="Ano", var_name="Pais", value_name=value_name)
+    df_long = wide.reset_index().melt(
+        id_vars="Ano", var_name="Pais", value_name=value_name
+    )
     df_long = df_long.groupby(["Ano", "Pais"], as_index=False).mean()
     if value_name == "Preco_Produtor":
         df_long[value_name] = pd.to_numeric(df_long[value_name], errors="coerce")
-        df_long[value_name] = np.where(df_long[value_name] > 1000, df_long[value_name] / 1e14, df_long[value_name])
+        df_long[value_name] = np.where(
+            df_long[value_name] > 1000, df_long[value_name] / 1e14, df_long[value_name]
+        )
     return df_long
 
+
 def parse_price_series(s):
-    s = s.astype(str).str.replace(",", ".", regex=False).str.replace(" ", "", regex=False)
+    s = (
+        s.astype(str)
+        .str.replace(",", ".", regex=False)
+        .str.replace(" ", "", regex=False)
+    )
     if s.str.contains("E").any():
         mant = s.str.split("E", n=1, expand=True)[0]
     else:
         mant = s
     vals = pd.to_numeric(mant, errors="coerce") * 100.0
     return vals
+
 
 def load_global_price_context(path):
     df = pd.read_csv(path, sep=",", dtype=str)
@@ -79,11 +97,13 @@ def load_global_price_context(path):
     df = df.set_index("months")
     return df
 
+
 def build_cambio_mensal(index):
     rng = np.random.RandomState(42)
     base = 4.0 + rng.normal(0, 0.2, size=len(index)).cumsum() / 50.0
     fx = pd.Series(base, index=index, name="Taxa_Cambio_USD_BRL")
     return fx.to_frame()
+
 
 def build_producao_lag_mensal(path, months_index):
     wide = load_annual_wide(path)
@@ -95,12 +115,14 @@ def build_producao_lag_mensal(path, months_index):
     mdf["Producao_Lag_6M"] = mdf["Producao_Global_Anual"].shift(6)
     return mdf[["Producao_Lag_6M"]]
 
+
 def impute_by_column(df):
     df = df.apply(pd.to_numeric, errors="coerce")
     for col in df.columns:
         med = df[col].median(skipna=True)
         df[col] = df[col].fillna(med).ffill().bfill()
     return df
+
 
 def main():
     ind_prices_path = os.path.join(DATA_DIR, "indicator-prices.csv")
@@ -112,19 +134,22 @@ def main():
     df_prod = impute_and_melt(prod_path, "Producao_Nacional")
     df_cons = impute_and_melt(cons_path, "Consumo_Nacional")
 
-    df_nat = (
-        df_y.merge(df_prod, on=["Ano", "Pais"], how="left")
-             .merge(df_cons, on=["Ano", "Pais"], how="left")
+    df_nat = df_y.merge(df_prod, on=["Ano", "Pais"], how="left").merge(
+        df_cons, on=["Ano", "Pais"], how="left"
     )
 
     g_month = load_global_price_context(ind_prices_path)
     g_month = g_month.sort_index()
     g_month["Ano"] = g_month.index.year
-    g_ann = g_month.groupby("Ano", as_index=True)[["Colombian Milds", "Robustas"]].mean()
-    g_ann = g_ann.rename(columns={
-        "Robustas": "Preco_Global_Anual_Robustas",
-        "Colombian Milds": "Preco_Global_Anual_Milds",
-    })
+    g_ann = g_month.groupby("Ano", as_index=True)[
+        ["Colombian Milds", "Robustas"]
+    ].mean()
+    g_ann = g_ann.rename(
+        columns={
+            "Robustas": "Preco_Global_Anual_Robustas",
+            "Colombian Milds": "Preco_Global_Anual_Milds",
+        }
+    )
     g_ann["Preco_Global_Lag_1Y"] = g_ann["Preco_Global_Anual_Robustas"].shift(1)
 
     fx_month = build_cambio_mensal(g_month.index)
@@ -132,24 +157,43 @@ def main():
     fx_ann = fx_month.groupby("Ano", as_index=True).mean()
     fx_ann = fx_ann.rename(columns={"Taxa_Cambio_USD_BRL": "Cambio_Anual_Medio"})
 
-    df_feat = (
-        df_nat.merge(g_ann[["Preco_Global_Lag_1Y"]], on="Ano", how="left")
-              .merge(fx_ann[["Cambio_Anual_Medio"]], on="Ano", how="left")
+    df_feat = df_nat.merge(g_ann[["Preco_Global_Lag_1Y"]], on="Ano", how="left").merge(
+        fx_ann[["Cambio_Anual_Medio"]], on="Ano", how="left"
     )
 
-    df_feat = df_feat.dropna(subset=["Preco_Produtor", "Producao_Nacional", "Consumo_Nacional", "Preco_Global_Lag_1Y", "Cambio_Anual_Medio"]) 
+    df_feat = df_feat.dropna(
+        subset=[
+            "Preco_Produtor",
+            "Producao_Nacional",
+            "Consumo_Nacional",
+            "Preco_Global_Lag_1Y",
+            "Cambio_Anual_Medio",
+        ]
+    )
     dummies = pd.get_dummies(df_feat["Pais"], prefix="Pais")
-    X = pd.concat([
-        df_feat[["Producao_Nacional", "Consumo_Nacional", "Preco_Global_Lag_1Y", "Cambio_Anual_Medio"]],
-        dummies
-    ], axis=1)
+    X = pd.concat(
+        [
+            df_feat[
+                [
+                    "Producao_Nacional",
+                    "Consumo_Nacional",
+                    "Preco_Global_Lag_1Y",
+                    "Cambio_Anual_Medio",
+                ]
+            ],
+            dummies,
+        ],
+        axis=1,
+    )
     y = df_feat["Preco_Produtor"]
 
     print(f"Observacoes_Pais_Ano_total: {len(df_nat)}")
     print(f"Observacoes_modelo_apos_dropna: {len(df_feat)}")
     print(f"Total_dummies_Pais: {dummies.shape[1]}")
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42
+    )
 
     param_grid = {
         "max_depth": [3, 5, 7],
@@ -183,14 +227,21 @@ def main():
     print(f"Acuracia(score): {best_model.score(X_test, y_test):.4f}")
     print(f"Acuracia_5pct: {tol_acc:.2f}%")
 
-    df_comp = pd.DataFrame({"Real": y_test, "Predito": y_pred, "Erro_Absoluto": abs_err}).sort_values("Erro_Absoluto", ascending=False).head(10)
+    df_comp = (
+        pd.DataFrame({"Real": y_test, "Predito": y_pred, "Erro_Absoluto": abs_err})
+        .sort_values("Erro_Absoluto", ascending=False)
+        .head(10)
+    )
     print(df_comp.to_string())
 
-    fi = pd.DataFrame({"feature": X.columns, "importance": best_model.feature_importances_}).sort_values("importance", ascending=False)
+    fi = pd.DataFrame(
+        {"feature": X.columns, "importance": best_model.feature_importances_}
+    ).sort_values("importance", ascending=False)
     print(fi.to_string(index=False))
     imp_fx = fi.loc[fi["feature"] == "Cambio_Anual_Medio", "importance"]
     if not imp_fx.empty:
         print(f"Importancia_Cambio_Anual_Medio: {float(imp_fx.iloc[0]):.6f}")
+
 
 if __name__ == "__main__":
     main()
